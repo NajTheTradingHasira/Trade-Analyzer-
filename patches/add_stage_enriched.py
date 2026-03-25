@@ -278,6 +278,10 @@ def stage_enriched_scan(df, symbol_col='symbol', date_col='date',
     """
     from patches.add_unified_scanner import unified_event_scan
 
+    # ── Normalize dates early to avoid Timestamp/string mixing ──
+    df = df.copy()
+    df[date_col] = pd.to_datetime(df[date_col], utc=True).dt.tz_localize(None)
+
     # ── Extract benchmark data ──
     benchmark_df = None
     if benchmark_symbol in df[symbol_col].values:
