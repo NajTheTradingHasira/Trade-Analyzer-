@@ -1,0 +1,25 @@
+# ─── Output artefacts ───────────────────────────────────────
+output/
+*.csv
+*.json
+*.html
+!watchlist.txt
+
+# ─── Environment / secrets ──────────────────────────────────
+.env
+
+# ─── Python ─────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ─── Node (trade analyzer suite) ───────────────────────────
+node_modules/
+
+# ─── OS ─────────────────────────────────────────────────────
+.DS_Store

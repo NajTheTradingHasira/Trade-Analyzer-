@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AI Trade Analyzer Suite</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<style>
+  :root {
+    --bg:#0a0e1a;--panel:#0f1628;--card:#141d35;--border:#1e2d50;
+    --accent:#00d4ff;--accent2:#7b61ff;--green:#00e676;--red:#ff4444;
+    --yellow:#ffd600;--text:#e0e6f0;--muted:#6b7a99;--input-bg:#0a0e1a;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:'SF Pro Text','Segoe UI',system-ui,sans-serif;min-height:100vh}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+  @keyframes pulse-border{0%,100%{border-color:var(--accent)}50%{border-color:var(--border)}}
+  ::-webkit-scrollbar{width:5px;height:5px}
+  ::-webkit-scrollbar-track{background:var(--panel)}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+  input,select,textarea,button{font-family:inherit}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useEffect, useCallback } = React;
+
+const MODULES = [
+  { id:"insider", icon:"🕵️", label:"Insider Tracker", badge:"SEC / Form 4", color:"#00d4ff" },
+  { id:"sentiment", icon:"📡", label:"Sentiment Scanner", badge:"NLP / Social", color:"#00e676" },
+  { id:"moat", icon:"🏰", label:"Moat Inspector", badge:"Fundamental", color:"#7b61ff" },
+  { id:"devil", icon:"😈", label:"Devil's Advocate", badge:"Risk / Bear", color:"#ff4444" },
+  { id:"macro", icon:"🌐", label:"Macro Correlator", badge:"Macro / Rates", color:"#ffd600" },
+  { id:"portfolio", icon:"📊", label:"Portfolio Auditor", badge:"Portfolio Mgmt", color:"#00d4ff" },
+  { id:"meanrev", icon:"📉", label:"Mean Reversion", badge:"Quant / Algo", color:"#00e676" },
+  { id:"nlp", icon:"🧠", label:"Sentiment Model", badge:"NLP / ML", color:"#7b61ff" },
+  { id:"darkpool", icon:"🌑", label:"Dark Pool", badge:"OTC / Block", color:"#ff4444" },
+  { id:"arb", icon:"⚖️", label:"Arb Monitor", badge:"Arb / Spread", color:"#7b61ff" },
+];
+
+const SYSTEM_PROMPT = "You are a quant research analyst. Apply Weinstein Stage Analysis, Oliver Kell Cycle of Price Action, and CANSLIM to all market analysis. Always state market regime before individual names. Flag IV percentile and HV/IV relationship on all options recommendations. Use web search for current data when relevant. Be precise, data-driven, and institutional in tone. Format with clear sections and use monospace-friendly formatting.";
+
+// ── Prompt Builders ──
+function buildInsiderPrompt(f) {
+  const extras = [];
+  if (f.flagPlans) extras.push("Flag 10b5-1 plan sales (routine) vs. open-market discretionary");
+  if (f.calcPct) extras.push("Calculate % of shares owned sold/purchased per insider");
+  if (f.crossEarnings) extras.push("Cross-reference with earnings release dates (informed trading screen)");
+  if (f.cluster) extras.push("Include cluster analysis (≥3 insiders same direction within 30 days)");
+  return `You are a senior equity research analyst at a tier-1 hedge fund specializing in insider activity intelligence.\n\nTASK: Review recent SEC Form 4 filings for ${f.company||"[COMPANY]"} covering the last ${f.period}.\n\nSCOPE:\n- Insider focus: ${f.role}\n- Transaction filter: ${f.txn}\n\nANALYSIS FRAMEWORK:\n1. Summarize all reportable transactions in chronological order (date, insider name, role, shares, avg price, total $value)\n2. Calculate net insider buying/selling pressure\n3. CRITICAL DISTINCTION — Classify each: "Routine" (10b5-1) vs. "Informative" (discretionary)\n4. Assess signal quality: cluster buying, % of holdings, earnings window timing\n${extras.length?"\nADDITIONAL:\n"+extras.map(e=>"• "+e).join("\n"):""}\n\nBefore analyzing, state MARKET REGIME and Weinstein Stage (1-4, sub-stage). Reference 30-week SMA and Mansfield RS.\n\nOUTPUT: Regime, Executive Summary, Transaction table, Signal Score (Bearish/Neutral/Mildly Bullish/Strongly Bullish), Recommended action.`;
+}
+
+function buildSentimentPrompt(f) {
+  return `You are a ${f.persona} analyst.\n\nTASK: Sentiment analysis for ${f.ticker||"[TICKER]"} using last ${f.window}.\nDATA: ${f.sources}\n\nState MARKET REGIME and Weinstein Stage first.\n\nDELIVER:\n1. Fear/Greed Score 1-10 with justification\n2. Top 3 sentiment drivers ranked by impact\n3. Sentiment momentum vs. 7 days prior\n${f.divergence?"4. Sentiment divergence flag\n":""}${f.options?"5. Options put/call ratio overlay\n":""}\nIf recommending options, flag IV percentile and HV/IV.\n\nOUTPUT: Score, Confidence, Drivers, Trading Implication.`;
+}
+
+function buildMoatPrompt(f) {
+  return `You are a fundamental equity analyst at a long-only institutional fund.\n\nTASK: Analyze ${f.company||"[COMPANY]"}'s economic moat via Porter's Five Forces.\nIndustry: ${f.industry||"[INDUSTRY]"} | Focus: ${f.moatType} | Horizon: ${f.horizon}\n\nState MARKET REGIME and Weinstein Stage first.\n\nFIVE FORCES: New Entrants, Supplier Power, Buyer Power, Substitutes, Rivalry\n\nCOMPARE: ${f.company} vs ${f.comp1||"[A]"} vs ${f.comp2||"[B]"} on margins, pricing power, retention.\n\nApply CANSLIM lens (C, A, N factors).\n\nVERDICT: Moat Width (Wide/Narrow/None), Trajectory (Widening/Stable/Narrowing), Biggest Risk, Investment Implication.`;
+}
+
+function buildDevilPrompt(f) {
+  const focuses = [];
+  if (f.valuation) focuses.push("Valuation / multiple compression");
+  if (f.technical) focuses.push("Technical bear case / Weinstein stage deterioration");
+  if (f.macro) focuses.push("Macro/sector headwinds");
+  if (f.earnings) focuses.push("Earnings risk & estimate cuts");
+  if (f.insider) focuses.push("Insider selling & institutional positioning");
+  return `You are a veteran short-seller, 20+ years at a short-bias hedge fund.\n\nSCENARIO: Trader is ${f.bias.toLowerCase()} on ${f.stock||"[STOCK]"}\nThesis: "${f.thesis||"[NOT PROVIDED]"}"\nTimeframe: ${f.timeframe}\n\nState MARKET REGIME and Weinstein Stage. If Stage 3/4, emphasize as structural bear confirmation.\n\nTASK: ${f.numReasons} data-backed reasons this trade FAILS. No validation of bull thesis. Each argument needs specific metrics.\n${focuses.length?"\nFOCUS:\n"+focuses.map(x=>"• "+x).join("\n"):""}\n\nPER ARGUMENT: Title, Evidence, Probability (L/M/H), What removes the risk.\n\nKILL SHOT: Highest-probability max-loss scenario.\n\nFlag IV percentile and HV/IV on any hedge recommendations.`;
+}
+
+function buildMacroPrompt(f) {
+  const extras = [];
+  if (f.subIndustries) extras.push("3 sub-industries at highest margin compression risk");
+  if (f.beta) extras.push("Historical beta to 100bps rate moves");
+  if (f.credit) extras.push("Credit spread implications (HY vs IG)");
+  if (f.currency) extras.push("Currency / DXY interaction");
+  return `You are a macro strategist at a global macro hedge fund.\n\nTASK: ${f.sector} sector rate sensitivity analysis.\nRATE: Fed Funds ≥${f.rate||"X"}% for ${f.duration}\n${f.analog!=="None"?"ANALOG: "+f.analog:""}\n\nState MARKET REGIME. What Weinstein Stage is the sector ETF in? 30-week SMA and Mansfield RS vs SPY.\n\nANALYSIS:\n1. Historical rate sensitivity (2-3 data points)\n2. Margin compression risk (3 sub-industries, mechanism, EBITDA impact)\n3. Relative positioning (least sensitive, valuation vs historical)\n${extras.length?"\nADDITIONAL:\n"+extras.map(e=>"• "+e).join("\n"):""}\n\nOUTPUT: OW/N/UW recommendation with data.`;
+}
+
+function buildPortfolioPrompt(f) {
+  return `You are a Portfolio Risk Manager at a multi-strategy fund.\n\nTASK: Risk audit on ${f.portfolioType} portfolio.\n\nHOLDINGS:\n${f.holdings||"[NOT ENTERED]"}\n\nRisk Tolerance: ${f.risk} | Concern: ${f.concern} | Benchmark: ${f.benchmark}\n\nState MARKET REGIME. For each major holding, note Weinstein Stage. Flag overweight Stage 3/4 names.\n\nAUDIT:\n1. Sector Concentration (flag >25%)\n2. Factor Exposure (Beta, Size, Value/Growth, Momentum, Quality)\n3. Correlation Risk (top 3 pairs, SPY/QQQ/TLT corr, VIX 35+ scenario)\n4. Tail Risk (2022 rate shock, 2020 COVID, 2008 GFC max DD)\n5. Optimization (2-3 Sharpe improvements, 1-2 hedges)\n\nFlag IV percentile / HV-IV on options positions.\n\nRisk Score: 1-10 with narrative.`;
+}
+
+function buildMeanRevPrompt(f) {
+  const extras = [];
+  if (f.statFoundation) extras.push("Z-score formula + rolling std bands");
+  if (f.signalLogic) extras.push("Entry/exit signal logic");
+  if (f.stopLoss) extras.push("Stop-loss and position sizing");
+  if (f.regimeFilter) extras.push("Regime filter (Weinstein Stage + ADX)");
+  if (f.pseudocode) extras.push("Python pseudocode");
+  if (f.backtest) extras.push("Backtest expectations (Sharpe, max DD)");
+  return `You are VP Quantitative Trading, JP Morgan Systematic Desk.\n\nTASK: Institutional-grade mean reversion algo for ${f.asset||"[ASSET]"}.\nType: ${f.type} | TF: ${f.timeframe} | Lookback: ${f.lookback} bars | Z-Score: ±${f.zscore} | Risk: ${f.riskPerTrade}\n\nState MARKET REGIME. Mean reversion works best in Stage 1 (base) and Stage 3 (top). Flag regime suitability.\n\nDELIVERABLES:\n${extras.map((e,i)=>(i+1)+". "+e).join("\n")}\n\nSIGNAL: Long Z≤-${f.zscore}, Short Z≥+${f.zscore}, Exit Z=0, Stop |Z|>±${(parseFloat(f.zscore)+1).toFixed(1)}\n\nInclude Hurst exponent + ADX<25 filter.\nConclude with Sharpe range and max DD estimate.`;
+}
+
+function buildNLPPrompt(f) {
+  const ds = [];
+  if (f.twitter) ds.push("Twitter/X $cashtag");
+  if (f.reddit) ds.push("Reddit (WSB, r/investing)");
+  if (f.news) ds.push("News APIs (Reuters, Bloomberg, 8-K)");
+  if (f.earningsCalls) ds.push("Earnings call transcripts");
+  if (f.secFilings) ds.push("SEC filings language delta");
+  if (f.optionsFlow) ds.push("Options flow sentiment");
+  const outs = [];
+  if (f.scoring) outs.push("Scoring methodology");
+  if (f.signalMap) outs.push("Signal-to-trade mapping");
+  if (f.alphaDecay) outs.push("Alpha decay curve");
+  if (f.backtesting) outs.push("Backtesting framework (IC, Sharpe)");
+  return `You are ML Engineer, Citadel NLP Trading Team.\n\nTASK: Production sentiment model for ${f.target||"[TARGET]"}.\nTier: ${f.complexity}\n\nDATA:\n${ds.map(d=>"• "+d).join("\n")}\n\nState MARKET REGIME. Sentiment-price correlation highest in Stage 2 (advancing).\n\nARCHITECTURE:\n1. Ingestion Pipeline\n2. Scoring Engine (${f.complexity})\n3. Signal Construction: ${outs.join(", ")}\n4. Price Integration (ensemble)\n5. Validation (walk-forward, IC>0.05)\n\nFlag IV percentile thresholds for options signal integration.\nConclude with priority order and 2-person ML team timeline.`;
+}
+
+function buildDarkPoolPrompt(f) {
+  const checks = [];
+  if (f.advPct) checks.push("DP volume as % of ADV");
+  if (f.clustering) checks.push("Print clustering");
+  if (f.vwap) checks.push("VWAP relationship");
+  if (f.optionsCross) checks.push("Cross-ref with options flow");
+  if (f.shortInterest) checks.push("Short interest interaction");
+  if (f.etfBasket) checks.push("ETF basket decomposition");
+  if (f.timing) checks.push("Timing analysis");
+  return `You are a microstructure analyst at ${f.persona}.\n\nTASK: Dark pool analysis for ${f.ticker||"[TICKER]"}, last ${f.window}.\nFilters: Min ${f.blockSize}, ${f.direction}, ${f.venue}, ${f.adv}, Impact ${f.impact}\n\nState MARKET REGIME and Weinstein Stage. DP accumulation in Stage 1 = early signal. Distribution in Stage 3 = institutional exit.\n\nANALYSIS:\n1. Volume Profile (% of tape, venue breakdown, flag >45%)\n2. Block Prints (chronological, classify buy/mid/sell, net flow)\n3. Intent Signals: ${checks.join(", ")}\n4. Smart Money Conclusion\n5. Trading Implication\n\nFlag IV percentile on any options overlay.\n\nOUTPUT: Institutional Bias Score -5 to +5.`;
+}
+
+function buildArbPrompt(f) {
+  let specific = "";
+  if (f.arbType==="stat") {
+    specific = `PAIR: Long ${f.leg1||"[L1]"} / Short ${f.leg2||"[L2]"}\nCorr: ${f.corrWindow} | Z: ±${f.arbZ} | Coint: ${f.cointTest} | Hedge: ${f.hedgeMethod}\n\n1. Cointegration (stat, p-val, half-life, Hurst, rolling corr)\n2. Hedge Ratio: β, spread, Z-score, percentile\n3. Signal: Long Z≤-${f.arbZ}, Short Z≥+${f.arbZ}, Exit Z=0, Stop |Z|>${(parseFloat(f.arbZ)+1.5).toFixed(1)}`;
+  } else if (f.arbType==="merger") {
+    const g = f.dealPrice&&f.currentPrice?((f.dealPrice-f.currentPrice)/f.currentPrice*100).toFixed(2):"N/A";
+    specific = `DEAL: ${f.acquirer||"[ACQ]"} → ${f.target||"[TGT]"}\nType: ${f.dealType} | Deal: $${f.dealPrice} | Current: $${f.currentPrice} | Spread: ${g}% | Close: ${f.closeDate||"TBD"}\n\n1. Spread Decomposition\n2. Completion Risk (regulatory, financing, MAC, shareholder, competing — 1-5)\n3. Scenarios (base/bear/bull)\n4. Position Structure`;
+  } else if (f.arbType==="etf") {
+    specific = `ETF: ${f.etf||"[ETF]"} | ${f.basketType} | Threshold: ${f.premThreshold} | Friction: ${f.friction}\n\n1. NAV Deviation\n2. Creation/Redemption Mechanism\n3. Persistent Premium/Discount Risks\n4. Practical Approach`;
+  } else {
+    specific = `SPOT: ${f.spot||"[SPOT]"} | FUTURES: ${f.futures||"[FUT]"} | Basis: ${f.basisType} | DTE: ${f.dte||"X"}\n\n1. Basis Calculation\n2. Cash-and-Carry\n3. Reverse Cash-and-Carry\n4. Roll Strategy`;
+  }
+  const uni = [];
+  if (f.expectedProfit) uni.push("Expected profit (ann. bps/%)");
+  if (f.riskScenarios) uni.push("Risk scenarios");
+  if (f.txnCosts) uni.push("Transaction cost breakdown");
+  if (f.histSpread) uni.push("Historical spread distribution");
+  if (f.kelly) uni.push("Kelly Criterion sizing");
+  if (f.regime) uni.push("Regime dependency");
+  return `You are a systematic arb specialist at ${f.persona}.\n\nTYPE: ${f.arbType.toUpperCase()}\n\nState MARKET REGIME.\n\n${specific}\n\nUNIVERSAL:\n${uni.map(u=>"• "+u).join("\n")}\n\nFlag IV percentile on any options overlay.\n\nSCORECARD: Return, Sharpe, Max Adverse Excursion, Convergence Prob, Size, GO/NO-GO.`;
+}
+
+// ── Shared Components ──
+function Field({label,children}) {
+  return <div style={{display:"flex",flexDirection:"column",gap:5}}>
+    <label style={{fontSize:"0.68rem",color:"#6b7a99",textTransform:"uppercase",letterSpacing:"0.8px",fontWeight:700}}>{label}</label>
+    {children}
+  </div>;
+}
+function Input({value,onChange,placeholder,type="text",...p}) {
+  return <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+    style={{background:"#0a0e1a",border:"1px solid #1e2d50",borderRadius:6,color:"#e0e6f0",padding:"9px 12px",fontSize:"0.82rem",outline:"none",width:"100%"}} {...p}/>;
+}
+function Select({value,onChange,options}) {
+  return <select value={value} onChange={e=>onChange(e.target.value)}
+    style={{background:"#0a0e1a",border:"1px solid #1e2d50",borderRadius:6,color:"#e0e6f0",padding:"9px 12px",fontSize:"0.82rem",outline:"none",width:"100%"}}>
+    {options.map(o=><option key={typeof o==="string"?o:o.value} value={typeof o==="string"?o:o.value} style={{background:"#141d35"}}>{typeof o==="string"?o:o.label}</option>)}
+  </select>;
+}
+function TextArea({value,onChange,placeholder,rows=3}) {
+  return <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows}
+    style={{background:"#0a0e1a",border:"1px solid #1e2d50",borderRadius:6,color:"#e0e6f0",padding:"9px 12px",fontSize:"0.82rem",outline:"none",width:"100%",resize:"vertical"}}/>;
+}
+function Check({checked,onChange,label}) {
+  return <label style={{display:"flex",alignItems:"center",gap:8,fontSize:"0.78rem",padding:"8px 12px",background:"#0a0e1a",borderRadius:6,border:"1px solid #1e2d50",cursor:"pointer",userSelect:"none"}}>
+    <input type="checkbox" checked={checked} onChange={e=>onChange(e.target.checked)} style={{accentColor:"#7b61ff",width:15,height:15}}/>
+    <span style={{color:checked?"#e0e6f0":"#6b7a99"}}>{label}</span>
+  </label>;
+}
+function Tip({color="#00d4ff",children}) {
+  return <div style={{background:color+"0F",borderLeft:"3px solid "+color,borderRadius:"0 6px 6px 0",padding:"10px 14px",marginBottom:14,fontSize:"0.75rem",color:"#6b7a99"}}>{children}</div>;
+}
+function Grid({cols=2,children}) {
+  return <div style={{display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gap:14}}>{children}</div>;
+}
+function Divider() { return <hr style={{border:"none",borderTop:"1px solid #1e2d50",margin:"16px 0"}}/>; }
+function SectionLabel({children}) {
+  return <div style={{fontSize:"0.68rem",color:"#6b7a99",textTransform:"uppercase",letterSpacing:"1.2px",fontWeight:600,marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+    {children}<span style={{flex:1,height:1,background:"#1e2d50"}}/>
+  </div>;
+}
+function RangeSlider({value,onChange,min,max,step}) {
+  return <div style={{display:"flex",alignItems:"center",gap:12}}>
+    <input type="range" value={value} onChange={e=>onChange(e.target.value)} min={min} max={max} step={step} style={{flex:1,accentColor:"#00d4ff"}}/>
+    <span style={{minWidth:32,textAlign:"center",fontSize:"0.85rem",fontWeight:700,color:"#00d4ff"}}>{value}</span>
+  </div>;
+}
+function RunBtn({onClick,loading,color="#00d4ff",textColor="#000",label="⚡ Run Analysis"}) {
+  return <div style={{marginTop:16}}>
+    <button onClick={onClick} disabled={loading} style={{padding:"11px 24px",border:"none",borderRadius:7,fontSize:"0.82rem",fontWeight:700,cursor:loading?"wait":"pointer",background:loading?"#1e2d50":color,color:loading?"#6b7a99":textColor,letterSpacing:.5}}>
+      {loading?"⏳ Analyzing...":label}
+    </button>
+  </div>;
+}
+
+// ── Module Forms ──
+function InsiderForm({onAnalyze,loading}) {
+  const [f,setF]=useState({company:"",period:"6 months",role:"All Insiders",txn:"Buys and Sells",flagPlans:true,calcPct:true,crossEarnings:false,cluster:false});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip><strong>Signal Logic:</strong> Cluster buying by multiple insiders = high-conviction bullish signal.</Tip>
+    <Grid><Field label="Company / Ticker"><Input value={f.company} onChange={v=>u("company",v)} placeholder="e.g. NVDA"/></Field>
+    <Field label="Lookback"><Select value={f.period} onChange={v=>u("period",v)} options={["3 months","6 months","12 months","24 months"]}/></Field>
+    <Field label="Focus Role"><Select value={f.role} onChange={v=>u("role",v)} options={["All Insiders","CEO / CFO only","Directors only","10% Beneficial Owners"]}/></Field>
+    <Field label="Transaction Type"><Select value={f.txn} onChange={v=>u("txn",v)} options={["Buys and Sells","Buys Only","Sells Only"]}/></Field></Grid>
+    <Divider/><SectionLabel>Filters</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <Check checked={f.flagPlans} onChange={v=>u("flagPlans",v)} label="Flag 10b5-1 vs. open-market"/>
+      <Check checked={f.calcPct} onChange={v=>u("calcPct",v)} label="Calc % holdings sold/purchased"/>
+      <Check checked={f.crossEarnings} onChange={v=>u("crossEarnings",v)} label="Cross-ref earnings dates"/>
+      <Check checked={f.cluster} onChange={v=>u("cluster",v)} label="Cluster analysis (≥3 insiders, 30 days)"/>
+    </div>
+    <RunBtn onClick={()=>onAnalyze(buildInsiderPrompt(f))} loading={loading}/>
+  </>;
+}
+
+function SentimentForm({onAnalyze,loading}) {
+  const [f,setF]=useState({ticker:"",window:"7 days",sources:"All (News + Social)",persona:"Goldman Sachs Equity Research",divergence:false,options:false});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip color="#00e676"><strong>Use Case:</strong> Extreme Fear at support = mean-reversion entry. Extreme Greed into resistance = fade.</Tip>
+    <Grid><Field label="Ticker"><Input value={f.ticker} onChange={v=>u("ticker",v)} placeholder="e.g. TSLA, NVDA"/></Field>
+    <Field label="Window"><Select value={f.window} onChange={v=>u("window",v)} options={["24 hours","3 days","7 days","14 days","30 days"]}/></Field>
+    <Field label="Data Sources"><Select value={f.sources} onChange={v=>u("sources",v)} options={["All (News + Social)","News Headlines Only","Reddit / WSB","Twitter / X","Earnings Transcripts"]}/></Field>
+    <Field label="Persona"><Select value={f.persona} onChange={v=>u("persona",v)} options={["Goldman Sachs Equity Research","Citadel NLP Trading Team","Quantitative Hedge Fund PM","Independent Retail Analyst"]}/></Field></Grid>
+    <Divider/><SectionLabel>Options</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <Check checked={f.divergence} onChange={v=>u("divergence",v)} label="Sentiment divergence flag"/>
+      <Check checked={f.options} onChange={v=>u("options",v)} label="Put/call ratio overlay"/>
+    </div>
+    <RunBtn onClick={()=>onAnalyze(buildSentimentPrompt(f))} loading={loading} color="#00e676"/>
+  </>;
+}
+
+function MoatForm({onAnalyze,loading}) {
+  const [f,setF]=useState({company:"",industry:"",comp1:"",comp2:"",moatType:"All Moat Types",horizon:"3-year outlook"});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip color="#7b61ff"><strong>Moat Signals:</strong> Widening = ROIC above WACC + pricing power. Shrinking = margin compression + share loss.</Tip>
+    <Grid><Field label="Company"><Input value={f.company} onChange={v=>u("company",v)} placeholder="e.g. AAPL"/></Field>
+    <Field label="Industry"><Input value={f.industry} onChange={v=>u("industry",v)} placeholder="e.g. Consumer Electronics"/></Field>
+    <Field label="Competitor A"><Input value={f.comp1} onChange={v=>u("comp1",v)} placeholder="e.g. Samsung"/></Field>
+    <Field label="Competitor B"><Input value={f.comp2} onChange={v=>u("comp2",v)} placeholder="e.g. Google"/></Field>
+    <Field label="Moat Type"><Select value={f.moatType} onChange={v=>u("moatType",v)} options={["All Moat Types","Network Effects","Cost Advantages","Switching Costs","Intangible Assets","Efficient Scale"]}/></Field>
+    <Field label="Horizon"><Select value={f.horizon} onChange={v=>u("horizon",v)} options={["1-year outlook","3-year outlook","5-year outlook","10-year outlook"]}/></Field></Grid>
+    <RunBtn onClick={()=>onAnalyze(buildMoatPrompt(f))} loading={loading} color="#7b61ff" textColor="#fff"/>
+  </>;
+}
+
+function DevilForm({onAnalyze,loading}) {
+  const [f,setF]=useState({stock:"",bias:"Bullish (Long)",thesis:"",timeframe:"2-8 Weeks (Swing)",numReasons:"5 reasons",valuation:true,technical:true,macro:true,earnings:false,insider:false});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip color="#ff4444"><strong>Edge:</strong> Steelmanning the opposing thesis before entry = highest-alpha pre-trade ritual.</Tip>
+    <Grid><Field label="Stock"><Input value={f.stock} onChange={v=>u("stock",v)} placeholder="e.g. NVDA"/></Field>
+    <Field label="Your Bias"><Select value={f.bias} onChange={v=>u("bias",v)} options={["Bullish (Long)","Bearish (Short)"]}/></Field></Grid>
+    <div style={{marginTop:14}}><Field label="Your Thesis"><TextArea value={f.thesis} onChange={v=>u("thesis",v)} placeholder="e.g. AI chip demand, data center capex supercycle..."/></Field></div>
+    <Grid><Field label="Timeframe"><Select value={f.timeframe} onChange={v=>u("timeframe",v)} options={["Intraday (0DTE)","1-5 Days","2-8 Weeks (Swing)","3-12 Months"]}/></Field>
+    <Field label="Counter-Arguments"><Select value={f.numReasons} onChange={v=>u("numReasons",v)} options={["3 reasons","5 reasons","7 reasons"]}/></Field></Grid>
+    <Divider/><SectionLabel>Bear Focus</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <Check checked={f.valuation} onChange={v=>u("valuation",v)} label="Valuation / multiple compression"/>
+      <Check checked={f.technical} onChange={v=>u("technical",v)} label="Technical bear case"/>
+      <Check checked={f.macro} onChange={v=>u("macro",v)} label="Macro/sector headwinds"/>
+      <Check checked={f.earnings} onChange={v=>u("earnings",v)} label="Earnings risk"/>
+      <Check checked={f.insider} onChange={v=>u("insider",v)} label="Insider selling"/>
+    </div>
+    <RunBtn onClick={()=>onAnalyze(buildDevilPrompt(f))} loading={loading} color="#ff4444" textColor="#fff" label="😈 Run Bear Case"/>
+  </>;
+}
+
+function MacroForm({onAnalyze,loading}) {
+  const [f,setF]=useState({sector:"Technology",rate:"",duration:"12 months",analog:"None",subIndustries:true,beta:true,credit:false,currency:false});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip color="#ffd600"><strong>Framework:</strong> Duration-sensitive sectors reprice fastest on rate moves.</Tip>
+    <Grid><Field label="Sector"><Select value={f.sector} onChange={v=>u("sector",v)} options={["Technology","Financials","Healthcare","Consumer Discretionary","Consumer Staples","Energy","Utilities","Real Estate / REITs","Industrials","Materials","Communication Services"]}/></Field>
+    <Field label="Fed Funds %"><Input value={f.rate} onChange={v=>u("rate",v)} placeholder="e.g. 4.5" type="number"/></Field>
+    <Field label="Duration"><Select value={f.duration} onChange={v=>u("duration",v)} options={["6 months","12 months","18 months","24+ months"]}/></Field>
+    <Field label="Analog"><Select value={f.analog} onChange={v=>u("analog",v)} options={["None","1994-1995","1999-2000","2004-2006","2015-2018","2022-2023"]}/></Field></Grid>
+    <Divider/><SectionLabel>Outputs</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <Check checked={f.subIndustries} onChange={v=>u("subIndustries",v)} label="3 sub-industries at risk"/>
+      <Check checked={f.beta} onChange={v=>u("beta",v)} label="Beta to 100bps moves"/>
+      <Check checked={f.credit} onChange={v=>u("credit",v)} label="Credit spread implications"/>
+      <Check checked={f.currency} onChange={v=>u("currency",v)} label="USD DXY interaction"/>
+    </div>
+    <RunBtn onClick={()=>onAnalyze(buildMacroPrompt(f))} loading={loading}/>
+  </>;
+}
+
+function PortfolioForm({onAnalyze,loading}) {
+  const [f,setF]=useState({holdings:"",portfolioType:"Options + Equities Mixed",risk:"Moderate (10-25% max drawdown)",concern:"Full Risk Audit",benchmark:"S&P 500 (SPY)"});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip><strong>Key Risk:</strong> Hidden factor concentration — 20 stocks may have 70% exposure to one macro factor.</Tip>
+    <Field label="Holdings (ticker: weight%, one per line)"><TextArea value={f.holdings} onChange={v=>u("holdings",v)} placeholder={"NVDA: 15%\nMSFT: 12%\nAAPL: 10%"} rows={5}/></Field>
+    <Grid><Field label="Type"><Select value={f.portfolioType} onChange={v=>u("portfolioType",v)} options={["Long-Only Equity","Long/Short Equity","Options + Equities Mixed","All Options","Multi-Asset"]}/></Field>
+    <Field label="Risk"><Select value={f.risk} onChange={v=>u("risk",v)} options={["Conservative (<10% DD)","Moderate (10-25% max drawdown)","Aggressive (25-40% DD)","Speculative (>40% OK)"]}/></Field>
+    <Field label="Concern"><Select value={f.concern} onChange={v=>u("concern",v)} options={["Sector Concentration","Correlation Risk","Factor Exposure","Tail Risk","Full Risk Audit"]}/></Field>
+    <Field label="Benchmark"><Select value={f.benchmark} onChange={v=>u("benchmark",v)} options={["S&P 500 (SPY)","NASDAQ 100 (QQQ)","60/40 Portfolio","Absolute Return (0%)"]}/></Field></Grid>
+    <RunBtn onClick={()=>onAnalyze(buildPortfolioPrompt(f))} loading={loading}/>
+  </>;
+}
+
+function MeanRevForm({onAnalyze,loading}) {
+  const [f,setF]=useState({asset:"",timeframe:"Daily bars (swing)",lookback:"20",zscore:"2",type:"Price-to-MA reversion",riskPerTrade:"1% of portfolio",statFoundation:true,signalLogic:true,stopLoss:true,regimeFilter:false,pseudocode:false,backtest:false});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip color="#00e676"><strong>Persona:</strong> VP Quant Trading, JP Morgan Systematic Desk.</Tip>
+    <Grid><Field label="Asset"><Input value={f.asset} onChange={v=>u("asset",v)} placeholder="e.g. SPY, ES"/></Field>
+    <Field label="Timeframe"><Select value={f.timeframe} onChange={v=>u("timeframe",v)} options={["Intraday (1-15 min)","Daily bars (swing)","Weekly bars (position)"]}/></Field>
+    <Field label="Lookback (bars)"><Input value={f.lookback} onChange={v=>u("lookback",v)} type="number"/></Field>
+    <Field label="Entry Z-Score"><RangeSlider value={f.zscore} onChange={v=>u("zscore",v)} min="1" max="4" step="0.5"/></Field>
+    <Field label="Type"><Select value={f.type} onChange={v=>u("type",v)} options={["Price-to-MA reversion","Pairs trading","RSI extremes","Volatility MR (VIX)"]}/></Field>
+    <Field label="Risk/Trade"><Select value={f.riskPerTrade} onChange={v=>u("riskPerTrade",v)} options={["0.5% of portfolio","1% of portfolio","2% of portfolio"]}/></Field></Grid>
+    <Divider/><SectionLabel>Components</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <Check checked={f.statFoundation} onChange={v=>u("statFoundation",v)} label="Z-score formula + bands"/>
+      <Check checked={f.signalLogic} onChange={v=>u("signalLogic",v)} label="Entry/exit logic"/>
+      <Check checked={f.stopLoss} onChange={v=>u("stopLoss",v)} label="Stop-loss + sizing"/>
+      <Check checked={f.regimeFilter} onChange={v=>u("regimeFilter",v)} label="Regime filter"/>
+      <Check checked={f.pseudocode} onChange={v=>u("pseudocode",v)} label="Python pseudocode"/>
+      <Check checked={f.backtest} onChange={v=>u("backtest",v)} label="Backtest expectations"/>
+    </div>
+    <RunBtn onClick={()=>onAnalyze(buildMeanRevPrompt(f))} loading={loading} color="#00e676"/>
+  </>;
+}
+
+function NLPForm({onAnalyze,loading}) {
+  const [f,setF]=useState({target:"",complexity:"Intermediate (FinBERT)",twitter:true,reddit:true,news:true,earningsCalls:false,secFilings:false,optionsFlow:false,scoring:true,signalMap:true,alphaDecay:false,backtesting:false});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip color="#7b61ff"><strong>Persona:</strong> ML Engineer, Citadel NLP Trading Team.</Tip>
+    <Grid><Field label="Stocks / Sector"><Input value={f.target} onChange={v=>u("target",v)} placeholder="e.g. Semiconductors, NVDA"/></Field>
+    <Field label="Complexity"><Select value={f.complexity} onChange={v=>u("complexity",v)} options={["Simple (VADER)","Intermediate (FinBERT)","Advanced (LLM multi-signal)"]}/></Field></Grid>
+    <Divider/><SectionLabel>Data Sources</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <Check checked={f.twitter} onChange={v=>u("twitter",v)} label="Twitter/X"/>
+      <Check checked={f.reddit} onChange={v=>u("reddit",v)} label="Reddit"/>
+      <Check checked={f.news} onChange={v=>u("news",v)} label="News APIs"/>
+      <Check checked={f.earningsCalls} onChange={v=>u("earningsCalls",v)} label="Earnings calls"/>
+      <Check checked={f.secFilings} onChange={v=>u("secFilings",v)} label="SEC filings"/>
+      <Check checked={f.optionsFlow} onChange={v=>u("optionsFlow",v)} label="Options flow"/>
+    </div>
+    <Divider/><SectionLabel>Model Output</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <Check checked={f.scoring} onChange={v=>u("scoring",v)} label="Scoring methodology"/>
+      <Check checked={f.signalMap} onChange={v=>u("signalMap",v)} label="Signal-to-trade mapping"/>
+      <Check checked={f.alphaDecay} onChange={v=>u("alphaDecay",v)} label="Alpha decay curve"/>
+      <Check checked={f.backtesting} onChange={v=>u("backtesting",v)} label="Backtesting framework"/>
+    </div>
+    <RunBtn onClick={()=>onAnalyze(buildNLPPrompt(f))} loading={loading} color="#7b61ff" textColor="#fff" label="🧠 Run Model Design"/>
+  </>;
+}
+
+function DarkPoolForm({onAnalyze,loading}) {
+  const [f,setF]=useState({ticker:"",window:"5 days",blockSize:"50,000 shares",direction:"All Prints",venue:"All Dark Venues",persona:"Citadel Market Structure Desk",adv:"20-day ADV",impact:">0.1%",advPct:true,clustering:true,vwap:true,optionsCross:true,shortInterest:false,etfBasket:false,timing:false});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip color="#ff4444"><strong>Signal:</strong> Repeated same-venue accumulation over 3-5 days = high-conviction position-building.</Tip>
+    <Grid><Field label="Ticker"><Input value={f.ticker} onChange={v=>u("ticker",v)} placeholder="e.g. NVDA"/></Field>
+    <Field label="Lookback"><Select value={f.window} onChange={v=>u("window",v)} options={["1 day","5 days","10 days","20 days","30 days"]}/></Field>
+    <Field label="Min Block"><Select value={f.blockSize} onChange={v=>u("blockSize",v)} options={["10,000 shares","50,000 shares","100,000 shares","$1M+ notional","$5M+ notional"]}/></Field>
+    <Field label="Direction"><Select value={f.direction} onChange={v=>u("direction",v)} options={["All Prints","Above Ask (Aggr. Buy)","Below Bid (Aggr. Sell)","At Mid (Passive)"]}/></Field>
+    <Field label="Venue"><Select value={f.venue} onChange={v=>u("venue",v)} options={["All Dark Venues","NYSE Dark","NASDAQ Dark","Broker Internalization","ATS / MTF"]}/></Field>
+    <Field label="Persona"><Select value={f.persona} onChange={v=>u("persona",v)} options={["Citadel Market Structure Desk","Goldman Sachs SIGMA X","JPMorgan Electronic Trading","Independent Quant"]}/></Field></Grid>
+    <Divider/><SectionLabel>Signals</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <Check checked={f.advPct} onChange={v=>u("advPct",v)} label="DP volume as % of ADV"/>
+      <Check checked={f.clustering} onChange={v=>u("clustering",v)} label="Print clustering"/>
+      <Check checked={f.vwap} onChange={v=>u("vwap",v)} label="VWAP relationship"/>
+      <Check checked={f.optionsCross} onChange={v=>u("optionsCross",v)} label="Cross-ref options flow"/>
+      <Check checked={f.shortInterest} onChange={v=>u("shortInterest",v)} label="Short interest"/>
+      <Check checked={f.etfBasket} onChange={v=>u("etfBasket",v)} label="ETF basket decomp"/>
+      <Check checked={f.timing} onChange={v=>u("timing",v)} label="Timing analysis"/>
+    </div>
+    <RunBtn onClick={()=>onAnalyze(buildDarkPoolPrompt(f))} loading={loading} color="#ff4444" textColor="#fff" label="🌑 Run Dark Pool"/>
+  </>;
+}
+
+function ArbForm({onAnalyze,loading}) {
+  const [f,setF]=useState({arbType:"stat",persona:"DE Shaw Systematic Arb Desk",leg1:"",leg2:"",corrWindow:"60 days",arbZ:"2",cointTest:"Engle-Granger",hedgeMethod:"OLS regression (static)",target:"",acquirer:"",dealType:"All-Cash",closeDate:"",dealPrice:"",currentPrice:"",etf:"",basketType:"Equity ETF",premThreshold:">0.10%",friction:"Low",spot:"",futures:"",basisType:"Futures premium/discount (%)",dte:"",expectedProfit:true,riskScenarios:true,txnCosts:true,histSpread:false,kelly:false,regime:false});
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <>
+    <Tip color="#7b61ff"><strong>Arb Decay:</strong> Stat-arb pairs have 3-20 day half-lives — the realistic edge for discretionary traders.</Tip>
+    <Grid><Field label="Arb Type"><Select value={f.arbType} onChange={v=>u("arbType",v)} options={[{value:"stat",label:"Statistical Arb (Pairs)"},{value:"merger",label:"Merger Arb"},{value:"etf",label:"ETF NAV Arb"},{value:"cross",label:"Cross-Asset / Futures Basis"}]}/></Field>
+    <Field label="Persona"><Select value={f.persona} onChange={v=>u("persona",v)} options={["DE Shaw Systematic Arb Desk","Renaissance Technologies","Two Sigma Market Neutral","Merger Arb Specialist","ETF Market Maker"]}/></Field></Grid>
+    <Divider/>
+    {f.arbType==="stat"&&<><SectionLabel>Stat Arb Params</SectionLabel><Grid>
+      <Field label="Leg 1 (Long)"><Input value={f.leg1} onChange={v=>u("leg1",v)} placeholder="e.g. NVDA"/></Field>
+      <Field label="Leg 2 (Short)"><Input value={f.leg2} onChange={v=>u("leg2",v)} placeholder="e.g. AMD"/></Field>
+      <Field label="Corr Window"><Select value={f.corrWindow} onChange={v=>u("corrWindow",v)} options={["30 days","60 days","90 days","252 days"]}/></Field>
+      <Field label="Z-Score"><RangeSlider value={f.arbZ} onChange={v=>u("arbZ",v)} min="1" max="4" step="0.5"/></Field>
+      <Field label="Coint Test"><Select value={f.cointTest} onChange={v=>u("cointTest",v)} options={["Engle-Granger","Johansen","ADF on residuals","KPSS"]}/></Field>
+      <Field label="Hedge Ratio"><Select value={f.hedgeMethod} onChange={v=>u("hedgeMethod",v)} options={["OLS regression (static)","Kalman Filter (dynamic)","Total Least Squares","Dollar-neutral (1:1)"]}/></Field>
+    </Grid></>}
+    {f.arbType==="merger"&&<><SectionLabel>Merger Arb Params</SectionLabel><Grid>
+      <Field label="Target"><Input value={f.target} onChange={v=>u("target",v)} placeholder="e.g. ATVI"/></Field>
+      <Field label="Acquirer"><Input value={f.acquirer} onChange={v=>u("acquirer",v)} placeholder="e.g. MSFT"/></Field>
+      <Field label="Deal Type"><Select value={f.dealType} onChange={v=>u("dealType",v)} options={["All-Cash","All-Stock","Cash + Stock","LBO / PE"]}/></Field>
+      <Field label="Close Date"><Input value={f.closeDate} onChange={v=>u("closeDate",v)} placeholder="e.g. Q3 2026"/></Field>
+      <Field label="Deal Price ($)"><Input value={f.dealPrice} onChange={v=>u("dealPrice",v)} type="number" placeholder="95.00"/></Field>
+      <Field label="Current ($)"><Input value={f.currentPrice} onChange={v=>u("currentPrice",v)} type="number" placeholder="91.50"/></Field>
+    </Grid></>}
+    {f.arbType==="etf"&&<><SectionLabel>ETF Arb Params</SectionLabel><Grid>
+      <Field label="ETF"><Input value={f.etf} onChange={v=>u("etf",v)} placeholder="e.g. XLK, QQQ"/></Field>
+      <Field label="Basket"><Select value={f.basketType} onChange={v=>u("basketType",v)} options={["Equity ETF","Fixed Income ETF","Commodity ETF","Leveraged / Inverse","International / EM"]}/></Field>
+      <Field label="Threshold"><Select value={f.premThreshold} onChange={v=>u("premThreshold",v)} options={[">0.05%",">0.10%",">0.25%",">0.50%"]}/></Field>
+      <Field label="Friction"><Select value={f.friction} onChange={v=>u("friction",v)} options={["Low","Medium","High"]}/></Field>
+    </Grid></>}
+    {f.arbType==="cross"&&<><SectionLabel>Cross-Asset Params</SectionLabel><Grid>
+      <Field label="Spot"><Input value={f.spot} onChange={v=>u("spot",v)} placeholder="e.g. SPY, GLD"/></Field>
+      <Field label="Futures"><Input value={f.futures} onChange={v=>u("futures",v)} placeholder="e.g. ES1!, GC1!"/></Field>
+      <Field label="Basis"><Select value={f.basisType} onChange={v=>u("basisType",v)} options={["Futures premium/discount (%)","Roll yield","Cash-and-carry rate","Contango / backwardation"]}/></Field>
+      <Field label="DTE"><Input value={f.dte} onChange={v=>u("dte",v)} type="number" placeholder="22"/></Field>
+    </Grid></>}
+    <Divider/><SectionLabel>Universal Analysis</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <Check checked={f.expectedProfit} onChange={v=>u("expectedProfit",v)} label="Expected profit (ann. bps/%)"/>
+      <Check checked={f.riskScenarios} onChange={v=>u("riskScenarios",v)} label="Risk scenarios"/>
+      <Check checked={f.txnCosts} onChange={v=>u("txnCosts",v)} label="Transaction costs"/>
+      <Check checked={f.histSpread} onChange={v=>u("histSpread",v)} label="Historical spread dist."/>
+      <Check checked={f.kelly} onChange={v=>u("kelly",v)} label="Kelly Criterion sizing"/>
+      <Check checked={f.regime} onChange={v=>u("regime",v)} label="Regime dependency"/>
+    </div>
+    <RunBtn onClick={()=>onAnalyze(buildArbPrompt(f))} loading={loading} color="#7b61ff" textColor="#fff" label="⚖️ Run Arb Analysis"/>
+  </>;
+}
+
+const FORM_MAP = {insider:InsiderForm,sentiment:SentimentForm,moat:MoatForm,devil:DevilForm,macro:MacroForm,portfolio:PortfolioForm,meanrev:MeanRevForm,nlp:NLPForm,darkpool:DarkPoolForm,arb:ArbForm};
+
+// ── AI Response ──
+function AIResponse({text,loading,error,provider}) {
+  const ref=useRef(null);
+  useEffect(()=>{if(ref.current&&(text||loading))ref.current.scrollIntoView({behavior:"smooth",block:"nearest"})},[text,loading]);
+  if(!text&&!loading&&!error) return null;
+  const pColor=provider==="perplexity"?"#20b8cd":"#00d4ff";
+  const pLabel=provider==="perplexity"?"PERPLEXITY":"CLAUDE";
+  return <div ref={ref} style={{marginTop:18}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:"0.7rem",color:"#00d4ff",fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>{loading?"⏳ Analyzing...":"⚡ AI Analysis"}</span>
+        {!loading&&text&&<span style={{fontSize:"0.6rem",padding:"2px 7px",borderRadius:3,background:pColor+"20",color:pColor,fontWeight:700}}>via {pLabel}</span>}
+      </div>
+      {text&&<button onClick={()=>navigator.clipboard.writeText(text)} style={{fontSize:"0.68rem",padding:"4px 10px",background:"#1e2d50",border:"none",borderRadius:4,color:"#6b7a99",cursor:"pointer"}}>Copy</button>}
+    </div>
+    <div style={{background:"#0a0e1a",border:`1px solid ${error?"#ff4444":"#00d4ff"}`,borderRadius:8,padding:18,fontSize:"0.8rem",lineHeight:1.8,color:error?"#ff6666":"#c8d8f0",whiteSpace:"pre-wrap",fontFamily:"'SF Mono','Fira Code','Courier New',monospace",maxHeight:500,overflowY:"auto",animation:loading?"pulse-border 2s infinite":"none"}}>
+      {loading&&<div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:pColor,animation:"blink 1s infinite"}}/>
+        <span style={{color:"#6b7a99"}}>{provider==="perplexity"?"Perplexity":"Claude"} is analyzing...</span>
+      </div>}
+      {error&&`❌ Error: ${error}`}
+      {text}
+    </div>
+  </div>;
+}
+
+// ── Main App ──
+function App() {
+  const [activeTab,setActiveTab]=useState(0);
+  const [responses,setResponses]=useState({});
+  const [loadingTab,setLoadingTab]=useState(null);
+  const [showSettings,setShowSettings]=useState(false);
+  const [provider,setProvider]=useState("claude");
+  const [pplxKey,setPplxKey]=useState("");
+  const [pplxModel,setPplxModel]=useState("sonar-pro");
+  const [keyVisible,setKeyVisible]=useState(false);
+  const [serverStatus,setServerStatus]=useState(null);
+
+  // Check server health on mount
+  useEffect(()=>{
+    fetch("/api/health").then(r=>r.json()).then(d=>setServerStatus(d)).catch(()=>setServerStatus({status:"error",providers:{claude:false,perplexity:false}}));
+  },[]);
+
+  const handleAnalyze=useCallback(async(prompt)=>{
+    const modId=MODULES[activeTab].id;
+    setLoadingTab(modId);
+    setResponses(p=>({...p,[modId]:{text:"",loading:true,error:null,provider}}));
+    try {
+      let text="";
+      if(provider==="perplexity") {
+        const headers={"Content-Type":"application/json"};
+        if(pplxKey) headers["x-pplx-key"]=pplxKey;
+        const res=await fetch("/api/perplexity",{method:"POST",headers,body:JSON.stringify({model:pplxModel,messages:[{role:"system",content:SYSTEM_PROMPT},{role:"user",content:prompt}],max_tokens:4000,search_recency_filter:"week"})});
+        const data=await res.json();
+        if(data.error) throw new Error(data.error);
+        text=data.choices?.[0]?.message?.content||"No response.";
+        if(data.citations?.length) { text+="\n\n───────────── SOURCES ─────────────\n"; data.citations.forEach((c,i)=>{text+=`[${i+1}] ${c}\n`;}); }
+      } else {
+        const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4000,system:SYSTEM_PROMPT,messages:[{role:"user",content:prompt}],tools:[{type:"web_search_20250305",name:"web_search"}]})});
+        const data=await res.json();
+        if(data.error) throw new Error(data.error);
+        text=data.content?.filter(b=>b.type==="text").map(b=>b.text).join("\n")||"No response.";
+      }
+      setResponses(p=>({...p,[modId]:{text,loading:false,error:null,provider}}));
+    } catch(err) {
+      setResponses(p=>({...p,[modId]:{text:"",loading:false,error:err.message,provider}}));
+    }
+    setLoadingTab(null);
+  },[activeTab,provider,pplxKey,pplxModel]);
+
+  const mod=MODULES[activeTab];
+  const FormComponent=FORM_MAP[mod.id];
+  const resp=responses[mod.id];
+  const claudeReady=serverStatus?.providers?.claude;
+  const pplxServerKey=serverStatus?.providers?.perplexity;
+
+  return <div style={{minHeight:"100vh"}}>
+    {/* Header */}
+    <div style={{background:"linear-gradient(90deg,#0a0e1a,#0f1628,#0a0e1a)",borderBottom:"1px solid #1e2d50",padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+      <div>
+        <div style={{fontSize:"1.3rem",fontWeight:700,letterSpacing:1}}>⚡ AI <span style={{color:"#00d4ff"}}>TRADE ANALYZER</span> SUITE</div>
+        <div style={{fontSize:"0.7rem",color:"#6b7a99",letterSpacing:2,textTransform:"uppercase"}}>10 Analyst Modules · Claude + Perplexity</div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <div style={{display:"flex",background:"#0a0e1a",borderRadius:6,border:"1px solid #1e2d50",overflow:"hidden"}}>
+          <button onClick={()=>setProvider("claude")} style={{padding:"6px 12px",fontSize:"0.68rem",fontWeight:700,border:"none",cursor:"pointer",letterSpacing:.5,background:provider==="claude"?"#00d4ff":"transparent",color:provider==="claude"?"#000":"#6b7a99",transition:"all .2s"}}>CLAUDE</button>
+          <button onClick={()=>{setProvider("perplexity");if(!pplxKey&&!pplxServerKey)setShowSettings(true);}} style={{padding:"6px 12px",fontSize:"0.68rem",fontWeight:700,border:"none",cursor:"pointer",letterSpacing:.5,background:provider==="perplexity"?"#20b8cd":"transparent",color:provider==="perplexity"?"#000":"#6b7a99",transition:"all .2s"}}>PERPLEXITY</button>
+        </div>
+        <button onClick={()=>setShowSettings(!showSettings)} style={{width:32,height:32,borderRadius:6,background:showSettings?"#1e2d50":"transparent",border:"1px solid #1e2d50",color:"#6b7a99",cursor:"pointer",fontSize:"1rem",display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
+        <div style={{fontSize:"0.72rem",color:"#6b7a99",display:"flex",alignItems:"center",gap:6}}>
+          <span style={{width:8,height:8,borderRadius:"50%",background:serverStatus?.status==="ok"?"#00e676":"#ff4444",display:"inline-block",animation:"blink 2s infinite"}}/>
+          {serverStatus?.status==="ok"?"LIVE":"CONNECTING..."}
+        </div>
+      </div>
+    </div>
+
+    {/* Settings */}
+    {showSettings&&<div style={{background:"#0f1628",borderBottom:"1px solid #1e2d50",padding:"18px 24px"}}>
+      <div style={{maxWidth:920,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+          <span style={{fontSize:"0.7rem",color:"#00d4ff",fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>⚙️ Provider Settings</span>
+          <span style={{flex:1,height:1,background:"#1e2d50"}}/>
+          <button onClick={()=>setShowSettings(false)} style={{background:"none",border:"none",color:"#6b7a99",cursor:"pointer",fontSize:"0.8rem"}}>✕</button>
+        </div>
+
+        {/* Server Status */}
+        <div style={{display:"flex",gap:16,marginBottom:14,fontSize:"0.72rem"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:claudeReady?"#00e676":"#ff4444"}}/>
+            <span style={{color:"#6b7a99"}}><strong style={{color:"#00d4ff"}}>Claude</strong> — {claudeReady?"Server key configured ✓":"ANTHROPIC_API_KEY not set on server"}</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:pplxServerKey||pplxKey?"#00e676":"#ffd600"}}/>
+            <span style={{color:"#6b7a99"}}><strong style={{color:"#20b8cd"}}>Perplexity</strong> — {pplxServerKey?"Server key configured ✓":pplxKey?"Client key set":"Enter key below or set PERPLEXITY_API_KEY on server"}</span>
+          </div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            <label style={{fontSize:"0.68rem",color:"#6b7a99",textTransform:"uppercase",letterSpacing:.8,fontWeight:700}}>Perplexity API Key {pplxServerKey&&"(override server key)"}</label>
+            <div style={{display:"flex",gap:6}}>
+              <input type={keyVisible?"text":"password"} value={pplxKey} onChange={e=>setPplxKey(e.target.value)} placeholder="pplx-xxxxxxxx"
+                style={{flex:1,background:"#0a0e1a",border:"1px solid #1e2d50",borderRadius:6,color:"#e0e6f0",padding:"9px 12px",fontSize:"0.82rem",outline:"none",fontFamily:"'SF Mono',monospace"}}/>
+              <button onClick={()=>setKeyVisible(!keyVisible)} style={{padding:"6px 10px",background:"#1e2d50",border:"none",borderRadius:6,color:"#6b7a99",cursor:"pointer"}}>{keyVisible?"🙈":"👁️"}</button>
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            <label style={{fontSize:"0.68rem",color:"#6b7a99",textTransform:"uppercase",letterSpacing:.8,fontWeight:700}}>Perplexity Model</label>
+            <select value={pplxModel} onChange={e=>setPplxModel(e.target.value)} style={{background:"#0a0e1a",border:"1px solid #1e2d50",borderRadius:6,color:"#e0e6f0",padding:"9px 12px",fontSize:"0.82rem",outline:"none"}}>
+              <option value="sonar-pro" style={{background:"#141d35"}}>Sonar Pro (best for research)</option>
+              <option value="sonar" style={{background:"#141d35"}}>Sonar (faster)</option>
+              <option value="sonar-reasoning-pro" style={{background:"#141d35"}}>Sonar Reasoning Pro</option>
+              <option value="sonar-reasoning" style={{background:"#141d35"}}>Sonar Reasoning</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={async()=>{
+            try{const h={"Content-Type":"application/json"};if(pplxKey)h["x-pplx-key"]=pplxKey;
+            const r=await fetch("/api/perplexity/test",{method:"POST",headers:h,body:JSON.stringify({model:pplxModel})});
+            const d=await r.json();alert(d.valid?"✅ Key valid! Model: "+pplxModel:"❌ "+d.error);}catch(e){alert("❌ "+e.message);}
+          }} style={{padding:"6px 14px",background:"#1e2d50",border:"1px solid #2a3d60",borderRadius:6,color:"#e0e6f0",cursor:"pointer",fontSize:"0.72rem",fontWeight:600}}>🔑 Test Connection</button>
+          {pplxKey&&<button onClick={()=>{setPplxKey("");}} style={{padding:"6px 14px",background:"transparent",border:"1px solid #ff444466",borderRadius:6,color:"#ff4444",cursor:"pointer",fontSize:"0.72rem",fontWeight:600}}>🗑️ Clear Key</button>}
+        </div>
+      </div>
+    </div>}
+
+    {/* Tabs */}
+    <div style={{display:"flex",overflowX:"auto",background:"#0f1628",borderBottom:"1px solid #1e2d50",padding:"0 12px",scrollbarWidth:"none"}}>
+      {MODULES.map((m,i)=>
+        <button key={m.id} onClick={()=>setActiveTab(i)} style={{flexShrink:0,padding:"12px 14px",fontSize:"0.7rem",fontWeight:600,letterSpacing:.8,textTransform:"uppercase",color:i===activeTab?"#00d4ff":"#6b7a99",background:"none",border:"none",cursor:"pointer",borderBottom:`2px solid ${i===activeTab?"#00d4ff":"transparent"}`,whiteSpace:"nowrap",transition:"all .2s"}}>
+          {m.icon} {m.label}
+        </button>
+      )}
+    </div>
+
+    {/* Content */}
+    <div style={{padding:20,maxWidth:920,margin:"0 auto"}}>
+      <div style={{background:"#141d35",border:"1px solid #1e2d50",borderRadius:10,padding:22}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
+          <div style={{width:38,height:38,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",background:mod.color+"18"}}>{mod.icon}</div>
+          <div style={{flex:1}}><div style={{fontSize:"1.05rem",fontWeight:700}}>{mod.label}</div></div>
+          <span style={{padding:"3px 10px",borderRadius:4,fontSize:"0.65rem",fontWeight:700,letterSpacing:.5,textTransform:"uppercase",background:mod.color+"20",color:mod.color}}>{mod.badge}</span>
+        </div>
+        <FormComponent onAnalyze={handleAnalyze} loading={loadingTab===mod.id}/>
+      </div>
+      <AIResponse text={resp?.text} loading={resp?.loading} error={resp?.error} provider={resp?.provider||provider}/>
+    </div>
+  </div>;
+}
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+</script>
+</body>
+</html>
